@@ -127,7 +127,7 @@ LR/SC有三个级别：RsrvNone、RsrvNonEventual和RsrvEventual。 RsrvNone表�
 
 #### Physical Memory Protection CSRs
 
-PMP在RV32和RV64中有不同的CSR的数量以及对应映射的内存大小，下图为一个PMP单元的例子，R、W、X分别被用于读写以及程序执行，当R=0，W=1的时候，这个单元被用于未来使用。![AMO](C:\Users\83428\Desktop\论文与学习\笔记\AMO.png)
+PMP在RV32和RV64中有不同的CSR的数量以及对应映射的内存大小，下图为一个PMP单元的例子，R、W、X分别被用于读写以及程序执行，当R=0，W=1的时候，这个单元被用于未来使用。![AMO](PMP.png)
 
 #### Address Matching
 
