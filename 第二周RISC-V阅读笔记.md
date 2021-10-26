@@ -73,5 +73,10 @@ Sv32地址被分为虚拟页地址和地址偏移量，当在satp中设置了MOD
 
 - U位主要用于判断这个页是否适用于User-mode，若U=1则证明User-mode可以访问该页
 - G位主要是表示全局映射（global mapping），指当对于非叶子节点的PTE（即中间页表），在此页表项之后所有的PTE都是全局可转换地址的。
-- 
+- A、D位表示当前页的状态（A=1表示在A被清零之后页面被读取、执行、匹配或写入，D=1表示在D被清零之后页面被写入）
 
+####  Virtual Address Translation Process
+
+地址翻译算法，，，盗了张sv48翻译算法的图，，，，感觉说的挺明白的其他的其实都大同小异（只是因为懒，，，）
+
+![preview](addresstran.jpg)
