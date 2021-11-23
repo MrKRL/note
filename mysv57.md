@@ -173,3 +173,174 @@ static void __init create_pmd_mapping(pmd_t *pmdp,
 
 这里也就是说需要创建对应的create_pud_mapping和create_p4d_mapping逻辑基本和上面差不多，，，
 
+之后是关于一些其他关于页表需要的函数，以pmd为例：
+
+```#endif /* CONFIG_XIP_KERNEL */
+
+static pmd_t *__init get_pmd_virt_early(phys_addr_t pa)
+{
+	/* Before MMU is enabled */
+	return (pmd_t *)((uintptr_t)pa);
+}
+
+static pmd_t *__init get_pmd_virt_fixmap(phys_addr_t pa)
+{
+	clear_fixmap(FIX_PMD);
+	return (pmd_t *)set_fixmap_offset(FIX_PMD, pa);
+}
+
+static pmd_t *__init get_pmd_virt_late(phys_addr_t pa)
+{
+	return (pmd_t *) __va(pa);
+}
+
+static phys_addr_t __init alloc_pmd_early(uintptr_t va)
+{
+	BUG_ON((va - kernel_map.virt_addr) >> PGDIR_SHIFT);
+
+	return (uintptr_t)early_pmd;
+}
+
+static phys_addr_t __init alloc_pmd_fixmap(uintptr_t va)
+{
+	return memblock_phys_alloc(PAGE_SIZE, PAGE_SIZE);
+}
+
+static phys_addr_t __init alloc_pmd_late(uintptr_t va)
+{
+	unsigned long vaddr;
+
+	vaddr = __get_free_page(GFP_KERNEL);
+	BUG_ON(!vaddr);
+	return __pa(vaddr);
+}```
+```
+
+分别针对pmd的虚拟地址以及fixmap的虚拟地址的生存和查询，其中early和late分别对应为mmu生成前后之间的情况。
+
+故而我们需要在之后的pud和p4d中加入这些函数。
+
+关于宏，主要为判断页表是否重叠，这一点请看linux公共内核那边的宏。
+
+好，到这里我们回到setup_vm函数，这里就很明白了pt_ops作为全局变量根据不同的情况（mmu建立的前后）为产生的变量决定其分配的函数，之后则是加入对fixmap的映射和trampoline（用于内核代码）的映射，注意建立fixmap和trampoline中对应的虚拟地址，其定义：
+
+``````
+static pmd_t trampoline_pmd[PTRS_PER_PMD] __page_aligned_bss;
+static pmd_t fixmap_pmd[PTRS_PER_PMD] __page_aligned_bss;
+``````
+
+这两个定义为对应生成pmd页面的地址（所以在生成对应映射的调用是pgd调用的是fixmap_pmd），同理使用pud和p4d时要加入对应的过程和数据结构。
+
+setup_vm之后的就是创建dtb映射
+
+```
+create_fdt_early_page_table(early_pg_dir, dtb_pa);
+```
+
+和上面类似，不过需要在上面两个映射完成后执行，，，，逻辑差不多这里 不再阐述
+
+回到head.S,在setup_vm后就进入了start_kernel正式进入了c语言时期，这里需要关注的是start_kernel中会进行一系列调用最终调用掉setup_vm_final函数，如下：
+
+```
+static void __init setup_vm_final(void)
+{
+	uintptr_t va, map_size;
+	phys_addr_t pa, start, end;
+	u64 i;
+
+	/**
+	 * MMU is enabled at this point. But page table setup is not complete yet.
+	 * fixmap page table alloc functions should be used at this point
+	 */
+	pt_ops.alloc_pte = alloc_pte_fixmap;
+	pt_ops.get_pte_virt = get_pte_virt_fixmap;
+#ifndef __PAGETABLE_PMD_FOLDED
+	pt_ops.alloc_pmd = alloc_pmd_fixmap;
+	pt_ops.get_pmd_virt = get_pmd_virt_fixmap;
+#endif
+	/* Setup swapper PGD for fixmap */
+	create_pgd_mapping(swapper_pg_dir, FIXADDR_START,
+			   __pa_symbol(fixmap_pgd_next),
+			   PGDIR_SIZE, PAGE_TABLE);
+
+	/* Map all memory banks in the linear mapping */
+	for_each_mem_range(i, &start, &end) {
+		if (start >= end)
+			break;
+		if (start <= __pa(PAGE_OFFSET) &&
+		    __pa(PAGE_OFFSET) < end)
+			start = __pa(PAGE_OFFSET);
+		if (end >= __pa(PAGE_OFFSET) + memory_limit)
+			end = __pa(PAGE_OFFSET) + memory_limit;
+
+		map_size = best_map_size(start, end - start);
+		for (pa = start; pa < end; pa += map_size) {
+			va = (uintptr_t)__va(pa);
+
+			create_pgd_mapping(swapper_pg_dir, va, pa, map_size,
+					   pgprot_from_va(va));
+		}
+	}
+
+#ifdef CONFIG_64BIT
+	/* Map the kernel */
+	create_kernel_page_table(swapper_pg_dir, false);
+#endif
+
+	/* Clear fixmap PTE and PMD mappings */
+	clear_fixmap(FIX_PTE);
+	clear_fixmap(FIX_PMD);
+
+	/* Move to swapper page table */
+	csr_write(CSR_SATP, PFN_DOWN(__pa_symbol(swapper_pg_dir)) | SATP_MODE);
+	local_flush_tlb_all();
+
+	/* generic page allocation functions must be used to setup page table */
+	pt_ops.alloc_pte = alloc_pte_late;
+	pt_ops.get_pte_virt = get_pte_virt_late;
+#ifndef __PAGETABLE_PMD_FOLDED
+	pt_ops.alloc_pmd = alloc_pmd_late;
+	pt_ops.get_pmd_virt = get_pmd_virt_late;
+#endif
+}
+```
+
+这里首先需要将swapper部分的内存进行映射，之后清处掉不用的fixmap，刷新cache，此时mmu已经配置完成，将后面的寻址和分配函数的后缀改为late。
+
+至于怎么改应该已经很明白了所以不再写了，，，，反正也是自己看，，，也不会有谁能看到这个吧，，，，
+
+## 怎么调试捏
+
+调试方法：gdb+qemu
+
+首先这里需要使用之前编译链中的gdb调试工具
+
+在.config中加入以下选项
+
+重新编译
+
+用一下命令让qemu监听对应的端口
+
+gdb链接对应的端口
+
+这里会有一个问题就是，在正常打开vmlinux的时候由于内核初始时虚拟内存并没有初始化，会造成在mmu初始化之前无法找到段和程序地址的情况，具体解决方法如下：
+
+使用编译工具链中的objdump反编译vmlinux，这是我产生的对应的段地址
+
+之后opensbi的习惯是物理初始地址为
+
+在物理地址之上加上虚拟地址，作为载入vmlinux的指定，就可以正常测试了
+
+## 关于怎么测试
+
+先看编译完成的内核对应的虚拟地址
+
+使用mmap映射并输出对应地址
+
+在host中交叉编译，注意使用静态编译，并将二进制文件加入虚拟机中
+
+具体加入方法；
+
+执行
+
+完成
