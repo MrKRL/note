@@ -313,23 +313,43 @@ static void __init setup_vm_final(void)
 
 调试方法：gdb+qemu
 
-首先这里需要使用之前编译链中的gdb调试工具
-
 在.config中加入以下选项
+
+```
+CONFIG_DEBUG_INFO=y
+CONFIG_GDB_SCRIPTS=y
+```
 
 重新编译
 
-用一下命令让qemu监听对应的端口
+```
+$ bear make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- defconfig
+$ bear make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- -j $(nproc)
+```
 
-gdb链接对应的端口
+用一下命令让qemu监听对应的端口，在你设置好的qemu启动虚拟机的命令后面加上`-S -gdb tcp::8889`
+
+首需要使用之前编译链中的gdb调试工具链接对应的端口
+
+`riscv64-unknown-linux-gnu-gdb -ex 'target remote:8889'`
 
 这里会有一个问题就是，在正常打开vmlinux的时候由于内核初始时虚拟内存并没有初始化，会造成在mmu初始化之前无法找到段和程序地址的情况，具体解决方法如下：
 
-使用编译工具链中的objdump反编译vmlinux，这是我产生的对应的段地址
+使用编译工具链中的objdump反编译vmlinux
 
-之后opensbi的习惯是物理初始地址为
+```riscv64-unknown-linux-gnu-objdump -x vmlinux```
 
-在物理地址之上加上虚拟地址，作为载入vmlinux的指定，就可以正常测试了
+我产生的段地址如下
+
+![vmlinuxsection](vmlinuxsection.png)
+
+之后opensbi的习惯是物理初始地址为0x80200000
+
+在物理地址之上加上虚拟地址，作为载入vmlinux的指定，就可以正常测试了,在gdb中使用下列命令：
+
+```add-symbol-file vmlinux -s .head.text 0x80200000 -s .text 0x80200000+0x2000 -s .init.text 0x80a00000 -s .exit.text 0x80200000+0x830cc8 -s .init.data 0x80200000+0xa00000 -s .data..percpu 0x80200000+0xa0f000 -s .alternative 0x80200000+0xa167e8 -s .rodata  0x80200000+0xc00000 -s .pci_fixup 0x80200000+0xddf310 -s __ksymtab 0x80200000+0xde29b8```
+
+之后可以在gdb中加入断点了
 
 ## 关于怎么测试
 
@@ -339,7 +359,14 @@ gdb链接对应的端口
 
 在host中交叉编译，注意使用静态编译，并将二进制文件加入虚拟机中
 
-具体加入方法；
+具体加入方法：
+
+```
+$ cd ../../riscv64-linux/
+$ sudo mount -o loop rootfs.img  rootfs
+$ sudo cp <the path of the a.out> rootfs/root
+$ sudo umount rootfs
+```
 
 执行
 
